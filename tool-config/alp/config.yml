@@ -4,5 +4,29 @@ reverse: true                   # boolean
 query_string: true              # boolean
 output: count,5xx,4xx,3xx,method,uri,min,max,sum,avg,p99                    # string(comma separated)
 
-# matching_groups:            # array
-# -  
+matching_groups:            # array
+---
+sort: sum  # max|min|avg|sum|count|uri|method|max-body|min-body|avg-body|sum-body|p1|p50|p99|stddev
+reverse: true                   # boolean
+query_string: true              # boolean
+output: count,5xx,4xx,3xx,method,uri,min,max,sum,avg,p99                    # string(comma separated)
+
+matching_groups:            # array
+- ^/api/admin/tenants/add$
+- ^/api/admin/tenants/billing
+
+- ^/api/organizer/players$
+- ^/api/organizer/players/add$
+- ^/api/organizer/player/[^/]+/disqualified$
+
+- ^/api/organizer/competitions/add$
+- ^/api/organizer/competition/[^/]+/finish$
+- ^/api/organizer/competition/[^/]+/score$
+- ^/api/organizer/billing$
+- ^/api/organizer/competitions$
+
+- ^/api/player/player/[^/]+$
+- ^/api/player/competition/[^/]+/ranking
+- ^/api/player/competitions$
+
+- ^/api/me$

@@ -6,9 +6,9 @@ endif
 
 # 問題によって変わる変数
 USER:=isucon
-BIN_NAME:=app
+BIN_NAME:=isuports
 BUILD_DIR:=./go
-SERVICE_NAME:=isu-go
+SERVICE_NAME:=isuports.service
 
 DB_PATH:=/etc/mysql
 NGINX_PATH:=/etc/nginx
@@ -188,7 +188,7 @@ deploy-envsh:
 .PHONY: build
 build:
 	cd $(BUILD_DIR); \
-	go build -o $(BIN_NAME)
+	go build -o $(BIN_NAME) ./cmd/isuports
 
 .PHONY: restart
 restart:
