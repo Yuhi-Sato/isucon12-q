@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/catatsuy/cache"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
 	"github.com/jmoiron/sqlx"
@@ -47,6 +48,8 @@ var (
 	adminDB *sqlx.DB
 
 	sqliteDriverName = "sqlite3"
+
+	tenantsBillingCache cache.ReadHeavyCacheExpired[string, SuccessResult]
 )
 
 // 環境変数を取得する、なければデフォルト値を返す
@@ -626,90 +629,103 @@ type TenantsBillingHandlerResult struct {
 // GET /api/admin/tenants/billing
 // URL引数beforeを指定した場合、指定した値よりもidが小さいテナントの課金レポートを取得する
 func tenantsBillingHandler(c echo.Context) error {
-	if host := c.Request().Host; host != getEnv("ISUCON_ADMIN_HOSTNAME", "admin.t.isucon.local") {
-		return echo.NewHTTPError(
-			http.StatusNotFound,
-			fmt.Sprintf("invalid hostname %s", host),
-		)
-	}
-
-	ctx := context.Background()
-	if v, err := parseViewer(c); err != nil {
-		return err
-	} else if v.role != RoleAdmin {
-		return echo.NewHTTPError(http.StatusForbidden, "admin role required")
-	}
-
-	before := c.QueryParam("before")
-	var beforeID int64
-	if before != "" {
-		var err error
-		beforeID, err = strconv.ParseInt(before, 10, 64)
-		if err != nil {
+	if result, ok := tenantsBillingCache.Get(""); ok {
+		return c.JSON(http.StatusOK, result)
+	} else {
+		if host := c.Request().Host; host != getEnv("ISUCON_ADMIN_HOSTNAME", "admin.t.isucon.local") {
 			return echo.NewHTTPError(
-				http.StatusBadRequest,
-				fmt.Sprintf("failed to parse query parameter 'before': %s", err.Error()),
+				http.StatusNotFound,
+				fmt.Sprintf("invalid hostname %s", host),
 			)
 		}
-	}
-	// テナントごとに
-	//   大会ごとに
-	//     scoreが登録されているplayer * 100
-	//     scoreが登録されていないplayerでアクセスした人 * 10
-	//   を合計したものを
-	// テナントの課金とする
-	ts := []TenantRow{}
-	if err := adminDB.SelectContext(ctx, &ts, "SELECT * FROM tenant ORDER BY id DESC"); err != nil {
-		return fmt.Errorf("error Select tenant: %w", err)
-	}
-	tenantBillings := make([]TenantWithBilling, 0, len(ts))
-	for _, t := range ts {
-		if beforeID != 0 && beforeID <= t.ID {
-			continue
-		}
-		err := func(t TenantRow) error {
-			tb := TenantWithBilling{
-				ID:          strconv.FormatInt(t.ID, 10),
-				Name:        t.Name,
-				DisplayName: t.DisplayName,
-			}
-			tenantDB, err := connectToTenantDB(t.ID)
-			if err != nil {
-				return fmt.Errorf("failed to connectToTenantDB: %w", err)
-			}
-			defer tenantDB.Close()
-			cs := []CompetitionRow{}
-			if err := tenantDB.SelectContext(
-				ctx,
-				&cs,
-				"SELECT * FROM competition WHERE tenant_id=?",
-				t.ID,
-			); err != nil {
-				return fmt.Errorf("failed to Select competition: %w", err)
-			}
-			for _, comp := range cs {
-				report, err := billingReportByCompetition(ctx, tenantDB, t.ID, comp.ID)
-				if err != nil {
-					return fmt.Errorf("failed to billingReportByCompetition: %w", err)
-				}
-				tb.BillingYen += report.BillingYen
-			}
-			tenantBillings = append(tenantBillings, tb)
-			return nil
-		}(t)
-		if err != nil {
+
+		ctx := context.Background()
+		if v, err := parseViewer(c); err != nil {
 			return err
+		} else if v.role != RoleAdmin {
+			return echo.NewHTTPError(http.StatusForbidden, "admin role required")
 		}
-		if len(tenantBillings) >= 10 {
-			break
+
+		before := c.QueryParam("before")
+		var beforeID int64
+		if before != "" {
+			var err error
+			beforeID, err = strconv.ParseInt(before, 10, 64)
+			if err != nil {
+				return echo.NewHTTPError(
+					http.StatusBadRequest,
+					fmt.Sprintf("failed to parse query parameter 'before': %s", err.Error()),
+				)
+			}
 		}
+		// テナントごとに
+		//   大会ごとに
+		//     scoreが登録されているplayer * 100
+		//     scoreが登録されていないplayerでアクセスした人 * 10
+		//   を合計したものを
+		// テナントの課金とする
+		ts := []TenantRow{}
+		if err := adminDB.SelectContext(ctx, &ts, "SELECT * FROM tenant ORDER BY id DESC"); err != nil {
+			return fmt.Errorf("error Select tenant: %w", err)
+		}
+		tenantBillings := make([]TenantWithBilling, 0, len(ts))
+		for _, t := range ts {
+			if beforeID != 0 && beforeID <= t.ID {
+				continue
+			}
+			err := func(t TenantRow) error {
+				tb := TenantWithBilling{
+					ID:          strconv.FormatInt(t.ID, 10),
+					Name:        t.Name,
+					DisplayName: t.DisplayName,
+				}
+				tenantDB, err := connectToTenantDB(t.ID)
+				if err != nil {
+					return fmt.Errorf("failed to connectToTenantDB: %w", err)
+				}
+				defer tenantDB.Close()
+				cs := []CompetitionRow{}
+				if err := tenantDB.SelectContext(
+					ctx,
+					&cs,
+					"SELECT * FROM competition WHERE tenant_id=?",
+					t.ID,
+				); err != nil {
+					return fmt.Errorf("failed to Select competition: %w", err)
+				}
+				for _, comp := range cs {
+					report, err := billingReportByCompetition(ctx, tenantDB, t.ID, comp.ID)
+					if err != nil {
+						return fmt.Errorf("failed to billingReportByCompetition: %w", err)
+					}
+					tb.BillingYen += report.BillingYen
+				}
+				tenantBillings = append(tenantBillings, tb)
+				return nil
+			}(t)
+			if err != nil {
+				return err
+			}
+			if len(tenantBillings) >= 10 {
+				break
+			}
+		}
+
+		tenantsBillingCache.Set("", SuccessResult{
+			Status: true,
+			Data: TenantsBillingHandlerResult{
+				Tenants: tenantBillings,
+			},
+		}, time.Second)
+
+		return c.JSON(http.StatusOK, SuccessResult{
+			Status: true,
+			Data: TenantsBillingHandlerResult{
+				Tenants: tenantBillings,
+			},
+		})
 	}
-	return c.JSON(http.StatusOK, SuccessResult{
-		Status: true,
-		Data: TenantsBillingHandlerResult{
-			Tenants: tenantBillings,
-		},
-	})
+
 }
 
 type PlayerDetail struct {
