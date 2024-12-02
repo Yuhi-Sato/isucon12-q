@@ -1,0 +1,11 @@
+sqlite-trace.log
+/sql/admin/90_data.sql
+/tenant_db/1.db
+php
+nodejs
+python
+ruby
+perl
+rust
+/tool-config/alp/notify-slack.toml
+/tool-config/slow-query/notify-slack.toml
