@@ -778,10 +778,10 @@ func tenantsBillingHandler(c echo.Context) error {
 
 			var competitionPlayers []CompetitionPlayer
 			query := "SELECT DISTINCT competition_id, player_id FROM player_score WHERE tenant_id = ? AND competition_id IN (?)"
-			query, args, err := sqlx.In(query, t.ID, competitionIds)
-			if err != nil {
-				return fmt.Errorf("failed to In: %w", err)
-			}
+			query, args, _ := sqlx.In(query, t.ID, competitionIds)
+			// if err != nil {
+			// 	return fmt.Errorf("failed to In: %w", err)
+			// }
 			query = tenantDB.Rebind(query)
 
 			if err := tenantDB.SelectContext(ctx, &competitionPlayers, query, args...); err != nil {
